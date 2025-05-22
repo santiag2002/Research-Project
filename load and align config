@@ -1,0 +1,99 @@
+// nextflow.config
+
+// Parameter definitions
+params {
+    project_dir = "$SCRATCH/Research_Project/load_and_align"
+    accessions = "${params.project_dir}/accessions.csv"
+    outdir = "${params.project_dir}/results"
+    genome = "${params.project_dir}/reference_genome.fa"
+    genome_index_dir = "${params.project_dir}/genome_index"
+    genome_index_base = "genome_index"
+    temp_fastq = "${params.outdir}/temp_fastq"
+
+    // General resources
+    max_memory = 16.GB
+    max_cpus = 4
+    max_time = 24.h
+}
+
+// Profiles
+profiles {
+    apptainer {
+        apptainer.enabled = true
+        apptainer.autoMounts = true
+    }
+    test {
+        process.cpus = 2
+        process.memory = '8 GB'
+        process.time = '1h'
+    }
+}
+
+// Process configurations
+process {
+    executor = 'slurm'
+    clusterOptions = '--account=def-mcfarlas'
+
+    withName: FETCHNGS {
+        cpus = 4
+        memory = '8 GB'
+        time = '6h'
+        container = 'nfcore/fetchngs:1.11.0'
+    }
+
+    withName: ALIGN_AND_SORT {
+        cpus = 4
+        memory = '16 GB'
+        time = '20h'
+        container = 'quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d45a:1744f68fe955578c63054b55309e05b41c37a80d-0'
+    }
+
+    withName: SAMTOOLS_DEPTH {
+        cpus = 2
+        memory = '4 GB'
+        time = '2h'
+        container = 'quay.io/biocontainers/samtools:1.15--h1170115_1'
+    }
+}
+
+// Executor configurations
+executor {
+    queueSize = 100
+    submitRateLimit = '10 sec'
+}
+
+// Apptainer configurations
+apptainer {
+    enabled = true
+    autoMounts = true
+    cacheDir = "$SCRATCH/.apptainer"
+    pullTimeout = '1h'
+}
+
+// Reporting configurations
+timeline {
+    enabled = true
+    file = "${params.outdir}/execution_timeline.html"
+}
+
+report {
+    enabled = true
+    file = "${params.outdir}/execution_report.html"
+}
+
+trace {
+    enabled = true
+    file = "${params.outdir}/execution_trace.txt"
+    fields = 'task_id,hash,native_id,process,tag,name,status,exit,module,container,cpus,time,disk,memory,attempt,submit,start,complete,duration,realtime,queue,%cpu,%mem,rss,vmem,peak_rss,peak_vmem'
+}
+
+// Error strategy
+process.errorStrategy = { task.attempt <= 3 ? 'retry' : 'finish' }
+process.maxRetries = 3
+process.maxErrors = -1
+
+// Enable Nextflow's built-in wave feature
+wave {
+    enabled = true
+    freeze = true
+}
