@@ -2,7 +2,7 @@
 
 nextflow.enable.dsl = 2
 
-// Parameter definitions
+// Parameters
 params {
     project_dir = "$SCRATCH/Research_Project/load_and_align"
     accessions = "${params.project_dir}/accessions.csv"
@@ -39,7 +39,7 @@ process FETCHNGS {
     """
 }
 
-// Align reads using Bowtie2 and sort with Samtools
+// Align reads and sort 
 process ALIGN_AND_SORT {
     tag "$sample_id"
     publishDir "${params.outdir}/aligned", mode: 'copy'
@@ -64,7 +64,7 @@ process ALIGN_AND_SORT {
     """
 }
 
-// Generate depth per position
+// Generate depth 
 process SAMTOOLS_DEPTH {
     tag "$sample_id"
     publishDir "${params.outdir}/depth", mode: 'copy'
@@ -83,7 +83,7 @@ process SAMTOOLS_DEPTH {
     """
 }
 
-// Define the main workflow
+// Define workflow
 workflow {
     // Create a channel of accessions
     Channel
@@ -92,7 +92,7 @@ workflow {
         .map { row -> row.accession }
         .set { accession_ch }
 
-    // Run FETCHNGS in parallel for all accessions
+    // Run FETCHNGS in parallel 
     fastq_ch = FETCHNGS(accession_ch)
         .flatMap { it -> 
             def sample_id = it.getName().split('_')[0]
@@ -101,13 +101,13 @@ workflow {
         }
         .groupTuple(by: [0, 1])
 
-    // Run ALIGN_AND_SORT in parallel for all samples
+    // Run ALIGN_AND_SORT in parallel 
     aligned = ALIGN_AND_SORT(fastq_ch, genome_ch, genome_index_ch)
 
     // Run SAMTOOLS_DEPTH in parallel for all aligned samples
     depth = SAMTOOLS_DEPTH(aligned.bam)
 
-    // Delete FASTQ files after alignment
+    // Delete FASTQ files 
     aligned.bam
         .join(fastq_ch)
         .map { sample_id, bam, bai, is_paired, fastq_files ->
