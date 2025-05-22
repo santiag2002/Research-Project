@@ -1,0 +1,117 @@
+#!/usr/bin/env nextflow
+
+nextflow.enable.dsl = 2
+
+// Parameter definitions
+params {
+    project_dir = "$SCRATCH/Research_Project/load_and_align"
+    accessions = "${params.project_dir}/accessions.csv"
+    outdir = "${params.project_dir}/results"
+    genome = "${params.project_dir}/reference_genome.fa"
+    genome_index_dir = "${params.project_dir}/genome_index"
+    genome_index_base = "genome_index"
+    temp_fastq = "${params.outdir}/temp_fastq"
+}
+
+// Create channels
+genome_ch = Channel.fromPath(params.genome)
+genome_index_ch = Channel.fromPath("${params.genome_index_dir}/${params.genome_index_base}*.bt2l")
+
+// Process to run nf-core/fetchngs
+process FETCHNGS {
+    publishDir "${params.temp_fastq}", mode: 'copy'
+
+    input:
+    val accession
+
+    output:
+    path "*.fastq.gz", emit: fastq_files
+
+    script:
+    """
+    nextflow run nf-core/fetchngs -r 1.11.0 \
+        --input $accession \
+        --outdir . \
+        -profile apptainer \
+        --disable-container-checks \
+        --input_type sra \
+        -resume
+    """
+}
+
+// Align reads using Bowtie2 and sort with Samtools
+process ALIGN_AND_SORT {
+    tag "$sample_id"
+    publishDir "${params.outdir}/aligned", mode: 'copy'
+
+    container 'quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d45a:1744f68fe955578c63054b55309e05b41c37a80d-0'
+
+    input:
+    tuple val(sample_id), val(is_paired), path(reads)
+    each path(genome)
+    each path(index)
+
+    output:
+    tuple val(sample_id), path("${sample_id}.bam"), path("${sample_id}.bam.bai"), emit: bam
+
+    script:
+    def reads_command = is_paired ? "-1 ${reads[0]} -2 ${reads[1]}" : "-U ${reads[0]}"
+    """
+    bowtie2 -p ${task.cpus} -x ${params.genome_index_dir}/${params.genome_index_base} ${reads_command} | \
+    samtools view -bS - | \
+    samtools sort -@ ${task.cpus} -o ${sample_id}.bam -
+    samtools index ${sample_id}.bam
+    """
+}
+
+// Generate depth per position
+process SAMTOOLS_DEPTH {
+    tag "$sample_id"
+    publishDir "${params.outdir}/depth", mode: 'copy'
+
+    container 'quay.io/biocontainers/samtools:1.15--h1170115_1'
+
+    input:
+    tuple val(sample_id), path(bam), path(bai)
+
+    output:
+    tuple val(sample_id), path("${sample_id}_depth.txt")
+
+    script:
+    """
+    samtools depth ${bam} > ${sample_id}_depth.txt
+    """
+}
+
+// Define the main workflow
+workflow {
+    // Create a channel of accessions
+    Channel
+        .fromPath(params.accessions)
+        .splitCsv(header:true)
+        .map { row -> row.accession }
+        .set { accession_ch }
+
+    // Run FETCHNGS in parallel for all accessions
+    fastq_ch = FETCHNGS(accession_ch)
+        .flatMap { it -> 
+            def sample_id = it.getName().split('_')[0]
+            def is_paired = it.getName().contains('_2.fastq.gz')
+            return tuple(sample_id, is_paired, it)
+        }
+        .groupTuple(by: [0, 1])
+
+    // Run ALIGN_AND_SORT in parallel for all samples
+    aligned = ALIGN_AND_SORT(fastq_ch, genome_ch, genome_index_ch)
+
+    // Run SAMTOOLS_DEPTH in parallel for all aligned samples
+    depth = SAMTOOLS_DEPTH(aligned.bam)
+
+    // Delete FASTQ files after alignment
+    aligned.bam
+        .join(fastq_ch)
+        .map { sample_id, bam, bai, is_paired, fastq_files ->
+            fastq_files.each { it.delete() }
+            return tuple(sample_id, bam, bai)
+        }
+}
