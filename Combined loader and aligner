@@ -11,6 +11,14 @@ params {
     genome_index_dir = "${params.project_dir}/genome_index"
     genome_index_base = "genome_index"
     temp_fastq = "${params.outdir}/temp_fastq"
+    
+    // Variant calling parameters
+    min_coverage = 5
+    max_coverage = 100
+    min_mapping_quality = 20
+    min_base_quality = 20
+    max_missing = 0.1  // 90% present = 10% missing allowed
+    maf = 0.025        // 2.5% minor allele frequency
 }
 
 // Create channels
@@ -83,6 +91,117 @@ process SAMTOOLS_DEPTH {
     """
 }
 
+// Call variants using bcftools mpileup
+process BCFTOOLS_MPILEUP {
+    tag "variant_calling"
+    publishDir "${params.outdir}/variants", mode: 'copy'
+
+    container 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+
+    input:
+    path bam_files
+    path bai_files
+    path genome
+
+    output:
+    path "raw_variants.vcf.gz", emit: raw_vcf
+    path "raw_variants.vcf.gz.csi", emit: raw_vcf_index
+
+    script:
+    def bam_list = bam_files.collect().join(' ')
+    """
+    # Create list of BAM files
+    echo "${bam_list}" | tr ' ' '\\n' > bam_list.txt
+    
+    # Run bcftools mpileup and call
+    bcftools mpileup \\
+        -f ${genome} \\
+        -b bam_list.txt \\
+        -q ${params.min_mapping_quality} \\
+        -Q ${params.min_base_quality} \\
+        -a FORMAT/DP,FORMAT/AD \\
+        -O u | \\
+    bcftools call \\
+        -m \\
+        -v \\
+        -O z \\
+        -o raw_variants.vcf.gz
+    
+    # Index the VCF file
+    bcftools index raw_variants.vcf.gz
+    """
+}
+
+// Filter variants based on quality and population criteria
+process FILTER_VARIANTS {
+    tag "filter_variants"
+    publishDir "${params.outdir}/variants", mode: 'copy'
+
+    container 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+
+    input:
+    path raw_vcf
+    path raw_vcf_index
+
+    output:
+    path "filtered_variants.vcf.gz", emit: filtered_vcf
+    path "filtered_variants.vcf.gz.csi", emit: filtered_vcf_index
+    path "variant_stats.txt", emit: stats
+
+    script:
+    """
+    # Apply initial quality filters
+    bcftools filter \\
+        -i "QUAL>=20 && INFO/DP>=${params.min_coverage} && INFO/DP<=${params.max_coverage}" \\
+        -O z \\
+        -o quality_filtered.vcf.gz \\
+        ${raw_vcf}
+    
+    bcftools index quality_filtered.vcf.gz
+    
+    # Apply population-level filters (90% present, MAF >= 2.5%)
+    bcftools filter \\
+        -i "F_MISSING<=${params.max_missing} && MAF>=${params.maf}" \\
+        -O z \\
+        -o filtered_variants.vcf.gz \\
+        quality_filtered.vcf.gz
+    
+    bcftools index filtered_variants.vcf.gz
+    
+    # Generate statistics
+    echo "Variant filtering statistics:" > variant_stats.txt
+    echo "Raw variants: \$(bcftools view -H ${raw_vcf} | wc -l)" >> variant_stats.txt
+    echo "Quality filtered: \$(bcftools view -H quality_filtered.vcf.gz | wc -l)" >> variant_stats.txt
+    echo "Final filtered: \$(bcftools view -H filtered_variants.vcf.gz | wc -l)" >> variant_stats.txt
+    echo "Samples: \$(bcftools query -l filtered_variants.vcf.gz | wc -l)" >> variant_stats.txt
+    """
+}
+
+// Generate variant summary statistics
+process VARIANT_STATS {
+    tag "variant_statistics"
+    publishDir "${params.outdir}/variants", mode: 'copy'
+
+    container 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+
+    input:
+    path filtered_vcf
+    path filtered_vcf_index
+
+    output:
+    path "variant_summary.txt"
+    path "allele_frequencies.txt"
+
+    script:
+    """
+    # Basic variant statistics
+    bcftools stats ${filtered_vcf} > variant_summary.txt
+    
+    # Extract allele frequencies
+    bcftools query -f '%CHROM\\t%POS\\t%REF\\t%ALT\\t%INFO/AF\\n' ${filtered_vcf} > allele_frequencies.txt
+    """
+}
+
 // Define workflow
 workflow {
     // Create a channel of accessions
@@ -106,6 +225,19 @@ workflow {
 
     // Run SAMTOOLS_DEPTH in parallel for all aligned samples
     depth = SAMTOOLS_DEPTH(aligned.bam)
+
+    // Collect all BAM files for variant calling
+    bam_files = aligned.bam.map { sample_id, bam, bai -> bam }.collect()
+    bai_files = aligned.bam.map { sample_id, bam, bai -> bai }.collect()
+
+    // Call variants using bcftools
+    variants = BCFTOOLS_MPILEUP(bam_files, bai_files, genome_ch)
+
+    // Filter variants based on quality and population criteria
+    filtered_variants = FILTER_VARIANTS(variants.raw_vcf, variants.raw_vcf_index)
+
+    // Generate variant statistics
+    VARIANT_STATS(filtered_variants.filtered_vcf, filtered_variants.filtered_vcf_index)
 
     // Delete FASTQ files 
     aligned.bam
