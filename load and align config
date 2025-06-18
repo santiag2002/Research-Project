@@ -10,6 +10,14 @@ params {
     genome_index_base = "genome_index"
     temp_fastq = "${params.outdir}/temp_fastq"
 
+    // Variant calling parameters (NEW)
+    min_coverage = 5
+    max_coverage = 100
+    min_mapping_quality = 20
+    min_base_quality = 20
+    max_missing = 0.1  // 90% present = 10% missing allowed
+    maf = 0.025        // 2.5% minor allele frequency
+
     // General resources
     max_memory = 16.GB
     max_cpus = 4
@@ -53,6 +61,28 @@ process {
         memory = '4 GB'
         time = '2h'
         container = 'quay.io/biocontainers/samtools:1.15--h1170115_1'
+    }
+
+    // NEW VARIANT CALLING PROCESSES
+    withName: BCFTOOLS_MPILEUP {
+        cpus = 8
+        memory = '32 GB'
+        time = '12h'
+        container = 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+    }
+
+    withName: FILTER_VARIANTS {
+        cpus = 4
+        memory = '16 GB'
+        time = '4h'
+        container = 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+    }
+
+    withName: VARIANT_STATS {
+        cpus = 2
+        memory = '8 GB'
+        time = '2h'
+        container = 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
     }
 }
 
