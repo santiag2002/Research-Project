@@ -3,22 +3,21 @@
 nextflow.enable.dsl = 2
 
 // Parameters
-params {
-    project_dir = "$SCRATCH/Research_Project/load_and_align"
-    accessions = "${params.project_dir}/accessions.csv"
-    outdir = "${params.project_dir}/results"
-    genome = "${params.project_dir}/reference_genome.fa"
-    genome_index_dir = "${params.project_dir}/genome_index"
-    genome_index_base = "genome_index"
-    temp_fastq = "${params.outdir}/temp_fastq"
-    
+    params.project_dir = "$SCRATCH/Research_Project/Pipeline_dev"
+    params.accessions = "${params.project_dir}/accessions.csv"
+    params.outdir = "${params.project_dir}/results"
+    params.genome = "${params.project_dir}/reference_genome.fa"
+    params.genome_index_dir = "${params.project_dir}/genome_index"
+    params.genome_index_base = "genome_index"
+    params.temp_fastq = "${params.outdir}/temp_fastq"
+
     // Variant calling parameters
-    min_coverage = 5
-    max_coverage = 100
-    min_mapping_quality = 20
-    min_base_quality = 20
-    max_missing = 0.1  // 90% present = 10% missing allowed
-    maf = 0.025        // 2.5% minor allele frequency
+    params.min_coverage = 5
+    params.max_coverage = 100
+    params.min_mapping_quality = 20
+    params.min_base_quality = 20
+    params.max_missing = 0.1  // 90% present = 10% missing allowed
+    params.maf = 0.025        // 2.5% minor allele frequency
 }
 
 // Create channels
