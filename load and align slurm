@@ -7,25 +7,18 @@
 #SBATCH --output=load_and_align.out
 #SBATCH --error=load_and_align.err
 
-cd $SCRATCH/Research_Project/load_and_align
+cd $SCRATCH/Research_Project/Pipeline_dev
 
 # Load required modules
 module load StdEnv/2023
 module load nextflow/24.04.4
-module load apptainer/1.3.5
 
-# Set Apptainer environment variables
-export APPTAINER_BIND="/etc/resolv.conf:/etc/resolv.conf"
-export APPTAINER_DNS="8.8.8.8"
-export APPTAINER_CACHEDIR="$SCRATCH/.apptainer"
-
-# Print Nextflow and Apptainer versions for debugging
+# Print Nextflow version for debugging
 nextflow -version
-apptainer --version
 
-# Run the Nextflow pipeline
+# Run the Nextflow pipeline (using modules profile)
 NXF_ANSI_LOG=false nextflow run main.nf \
-    -profile apptainer \
+    -profile modules \
     -resume \
     -with-report \
     -with-timeline \
