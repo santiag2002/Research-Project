@@ -3,55 +3,58 @@
 nextflow.enable.dsl = 2
 
 // Parameters
-    params.project_dir = "$SCRATCH/Research_Project/Pipeline_dev"
-    params.accessions = "${params.project_dir}/accessions.csv"
-    params.outdir = "${params.project_dir}/results"
-    params.genome = "${params.project_dir}/reference_genome.fa"
-    params.genome_index_dir = "${params.project_dir}/genome_index"
-    params.genome_index_base = "genome_index"
-    params.temp_fastq = "${params.outdir}/temp_fastq"
+params.project_dir = "$SCRATCH/Research_Project/Pipeline_dev"
+params.accessions = "${params.project_dir}/accessions.csv"
+params.outdir = "${params.project_dir}/results"
+params.genome = "${params.project_dir}/reference_genome.fa"
+params.genome_index_dir = "${params.project_dir}/genome_index"
+params.genome_index_base = "genome_index"
+params.temp_fastq = "${params.outdir}/temp_fastq"
 
-    // Variant calling parameters
-    params.min_coverage = 5
-    params.max_coverage = 100
-    params.min_mapping_quality = 20
-    params.min_base_quality = 20
-    params.max_missing = 0.1  // 90% present = 10% missing allowed
-    params.maf = 0.025        // 2.5% minor allele frequency
-}
+// Variant calling parameters
+params.min_coverage = 5
+params.max_coverage = 100
+params.min_mapping_quality = 20
+params.min_base_quality = 20
+params.max_missing = 0.1  // 90% present = 10% missing allowed
+params.maf = 0.025        // 2.5% minor allele frequency
 
 // Create channels
 genome_ch = Channel.fromPath(params.genome)
-genome_index_ch = Channel.fromPath("${params.genome_index_dir}/${params.genome_index_base}*.bt2l")
+genome_index_ch = Channel.fromPath("${params.genome_index_dir}/${params.genome_index_base}*.bt2")
 
-// Process to run nf-core/fetchngs
+// Process to download SRA data using native modules
 process FETCHNGS {
     publishDir "${params.temp_fastq}", mode: 'copy'
+    module 'StdEnv/2023:sra-toolkit/3.0.9'
 
     input:
     val accession
 
     output:
-    path "*.fastq.gz", emit: fastq_files
+    tuple val(accession), path("*.fastq.gz"), emit: fastq_files
 
     script:
     """
-    nextflow run nf-core/fetchngs -r 1.11.0 \
-        --input $accession \
-        --outdir . \
-        -profile apptainer \
-        --disable-container-checks \
-        --input_type sra \
-        -resume
+    # Create NCBI config directory and settings
+    mkdir -p ~/.ncbi
+    cat > ~/.ncbi/user-settings.mkfg << 'EOF'
+/LIBS/GUID = "726cb98a-eb6f-4d9c-88be-230f7dae3aec"
+/libs/cloud/report_instance_identity = "true"
+EOF
+
+    # Download and compress
+    fasterq-dump ${accession} --split-files
+    gzip *.fastq
     """
 }
 
-// Align reads and sort 
+// Align reads and sort
 process ALIGN_AND_SORT {
     tag "$sample_id"
     publishDir "${params.outdir}/aligned", mode: 'copy'
 
-    container 'quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d45a:1744f68fe955578c63054b55309e05b41c37a80d-0'
+    module 'StdEnv/2023:bowtie2/2.5.4:samtools/1.22.1'  // ← UPDATED WITH CORRECT VERSIONS
 
     input:
     tuple val(sample_id), val(is_paired), path(reads)
@@ -71,12 +74,12 @@ process ALIGN_AND_SORT {
     """
 }
 
-// Generate depth 
+// Generate depth
 process SAMTOOLS_DEPTH {
     tag "$sample_id"
     publishDir "${params.outdir}/depth", mode: 'copy'
 
-    container 'quay.io/biocontainers/samtools:1.15--h1170115_1'
+    module 'StdEnv/2023:samtools/1.22.1'  // ← UPDATED WITH CORRECT VERSION
 
     input:
     tuple val(sample_id), path(bam), path(bai)
@@ -95,7 +98,7 @@ process BCFTOOLS_MPILEUP {
     tag "variant_calling"
     publishDir "${params.outdir}/variants", mode: 'copy'
 
-    container 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+    module 'StdEnv/2023:bcftools/1.22'  // ← UPDATED WITH CORRECT VERSION
 
     input:
     path bam_files
@@ -111,7 +114,7 @@ process BCFTOOLS_MPILEUP {
     """
     # Create list of BAM files
     echo "${bam_list}" | tr ' ' '\\n' > bam_list.txt
-    
+
     # Run bcftools mpileup and call
     bcftools mpileup \\
         -f ${genome} \\
@@ -125,7 +128,7 @@ process BCFTOOLS_MPILEUP {
         -v \\
         -O z \\
         -o raw_variants.vcf.gz
-    
+
     # Index the VCF file
     bcftools index raw_variants.vcf.gz
     """
@@ -136,7 +139,7 @@ process FILTER_VARIANTS {
     tag "filter_variants"
     publishDir "${params.outdir}/variants", mode: 'copy'
 
-    container 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+    module 'StdEnv/2023:bcftools/1.22'  // ← UPDATED WITH CORRECT VERSION
 
     input:
     path raw_vcf
@@ -155,18 +158,18 @@ process FILTER_VARIANTS {
         -O z \\
         -o quality_filtered.vcf.gz \\
         ${raw_vcf}
-    
+
     bcftools index quality_filtered.vcf.gz
-    
+
     # Apply population-level filters (90% present, MAF >= 2.5%)
     bcftools filter \\
         -i "F_MISSING<=${params.max_missing} && MAF>=${params.maf}" \\
         -O z \\
         -o filtered_variants.vcf.gz \\
         quality_filtered.vcf.gz
-    
+
     bcftools index filtered_variants.vcf.gz
-    
+
     # Generate statistics
     echo "Variant filtering statistics:" > variant_stats.txt
     echo "Raw variants: \$(bcftools view -H ${raw_vcf} | wc -l)" >> variant_stats.txt
@@ -181,7 +184,7 @@ process VARIANT_STATS {
     tag "variant_statistics"
     publishDir "${params.outdir}/variants", mode: 'copy'
 
-    container 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+    module 'StdEnv/2023:bcftools/1.22'  // ← UPDATED WITH CORRECT VERSION
 
     input:
     path filtered_vcf
@@ -195,7 +198,7 @@ process VARIANT_STATS {
     """
     # Basic variant statistics
     bcftools stats ${filtered_vcf} > variant_summary.txt
-    
+
     # Extract allele frequencies
     bcftools query -f '%CHROM\\t%POS\\t%REF\\t%ALT\\t%INFO/AF\\n' ${filtered_vcf} > allele_frequencies.txt
     """
@@ -203,46 +206,38 @@ process VARIANT_STATS {
 
 // Define workflow
 workflow {
-    // Create a channel of accessions
-    Channel
+    // Create genome channels
+    genome_ch = Channel.fromPath(params.genome)
+    genome_index_ch = Channel.fromPath("${params.genome_index_dir}/${params.genome_index_base}*")
+        .collect()
+
+    // Create accession channel
+    accession_ch = Channel
         .fromPath(params.accessions)
         .splitCsv(header:true)
         .map { row -> row.accession }
-        .set { accession_ch }
 
-    // Run FETCHNGS in parallel 
-    fastq_ch = FETCHNGS(accession_ch)
-        .flatMap { it -> 
-            def sample_id = it.getName().split('_')[0]
-            def is_paired = it.getName().contains('_2.fastq.gz')
-            return tuple(sample_id, is_paired, it)
+    // Download samples
+    fastq_files = FETCHNGS(accession_ch)
+
+    // FIXED: Handle both single files and lists of files
+    fastq_ch = fastq_files.fastq_files
+        .map { accession, files ->
+            // Convert single file to list if needed
+            def file_list = files instanceof List ? files : [files]
+            def sorted_files = file_list.sort { it.getName() }
+            def is_paired = sorted_files.size() > 1
+            [accession, is_paired, sorted_files]
         }
-        .groupTuple(by: [0, 1])
 
-    // Run ALIGN_AND_SORT in parallel 
+    // Continue with rest of pipeline
     aligned = ALIGN_AND_SORT(fastq_ch, genome_ch, genome_index_ch)
-
-    // Run SAMTOOLS_DEPTH in parallel for all aligned samples
     depth = SAMTOOLS_DEPTH(aligned.bam)
 
-    // Collect all BAM files for variant calling
     bam_files = aligned.bam.map { sample_id, bam, bai -> bam }.collect()
     bai_files = aligned.bam.map { sample_id, bam, bai -> bai }.collect()
 
-    // Call variants using bcftools
     variants = BCFTOOLS_MPILEUP(bam_files, bai_files, genome_ch)
-
-    // Filter variants based on quality and population criteria
     filtered_variants = FILTER_VARIANTS(variants.raw_vcf, variants.raw_vcf_index)
-
-    // Generate variant statistics
     VARIANT_STATS(filtered_variants.filtered_vcf, filtered_variants.filtered_vcf_index)
-
-    // Delete FASTQ files 
-    aligned.bam
-        .join(fastq_ch)
-        .map { sample_id, bam, bai, is_paired, fastq_files ->
-            fastq_files.each { it.delete() }
-            return tuple(sample_id, bam, bai)
-        }
 }
