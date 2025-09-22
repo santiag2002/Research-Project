@@ -2,7 +2,7 @@
 
 // Parameter definitions
 params {
-    project_dir = "$SCRATCH/Research_Project/load_and_align"
+    project_dir = "$SCRATCH/Research_Project/Pipeline_dev"
     accessions = "${params.project_dir}/accessions.csv"
     outdir = "${params.project_dir}/results"
     genome = "${params.project_dir}/reference_genome.fa"
@@ -10,13 +10,13 @@ params {
     genome_index_base = "genome_index"
     temp_fastq = "${params.outdir}/temp_fastq"
 
-    // Variant calling parameters (NEW)
+    // Variant calling parameters
     min_coverage = 5
     max_coverage = 100
     min_mapping_quality = 20
     min_base_quality = 20
-    max_missing = 0.1  // 90% present = 10% missing allowed
-    maf = 0.025        // 2.5% minor allele frequency
+    max_missing = 0.1
+    maf = 0.025
 
     // General resources
     max_memory = 16.GB
@@ -26,9 +26,9 @@ params {
 
 // Profiles
 profiles {
-    apptainer {
-        apptainer.enabled = true
-        apptainer.autoMounts = true
+    modules {
+        // Use modules instead of containers
+        process.module = true
     }
     test {
         process.cpus = 2
@@ -43,46 +43,45 @@ process {
     clusterOptions = '--account=def-mcfarlas'
 
     withName: FETCHNGS {
-        cpus = 4
-        memory = '8 GB'
-        time = '6h'
-        container = 'nfcore/fetchngs:1.11.0'
+        cpus = 1
+        memory = '4 GB'
+        time = '2h'
+        module = 'StdEnv/2023:sra-toolkit/3.0.9'
     }
 
     withName: ALIGN_AND_SORT {
         cpus = 4
         memory = '16 GB'
         time = '20h'
-        container = 'quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d45a:1744f68fe955578c63054b55309e05b41c37a80d-0'
+        module = 'StdEnv/2023:bowtie2/2.5.4:samtools/1.22.1'  // ← REPLACED CONTAINER
     }
 
     withName: SAMTOOLS_DEPTH {
         cpus = 2
         memory = '4 GB'
         time = '2h'
-        container = 'quay.io/biocontainers/samtools:1.15--h1170115_1'
+        module = 'StdEnv/2023:samtools/1.22.1'  // ← REPLACED CONTAINER
     }
 
-    // NEW VARIANT CALLING PROCESSES
     withName: BCFTOOLS_MPILEUP {
         cpus = 8
         memory = '32 GB'
         time = '12h'
-        container = 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+        module = 'StdEnv/2023:bcftools/1.22'  // ← REPLACED CONTAINER
     }
 
     withName: FILTER_VARIANTS {
         cpus = 4
         memory = '16 GB'
         time = '4h'
-        container = 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+        module = 'StdEnv/2023:bcftools/1.22'  // ← REPLACED CONTAINER
     }
 
     withName: VARIANT_STATS {
         cpus = 2
         memory = '8 GB'
         time = '2h'
-        container = 'quay.io/biocontainers/bcftools:1.17--haef29d1_0'
+        module = 'StdEnv/2023:bcftools/1.22'  // ← REPLACED CONTAINER
     }
 }
 
@@ -90,15 +89,13 @@ process {
 executor {
     queueSize = 100
     submitRateLimit = '10 sec'
+
+    $slurm {
+        queueSize = 50
+    }
 }
 
-// Apptainer configurations
-apptainer {
-    enabled = true
-    autoMounts = true
-    cacheDir = "$SCRATCH/.apptainer"
-    pullTimeout = '1h'
-}
+// REMOVED APPTAINER CONFIGURATIONS (not needed for modules)
 
 // Reporting configurations
 timeline {
@@ -121,9 +118,3 @@ trace {
 process.errorStrategy = { task.attempt <= 3 ? 'retry' : 'finish' }
 process.maxRetries = 3
 process.maxErrors = -1
-
-// Enable Nextflow's built-in wave feature
-wave {
-    enabled = true
-    freeze = true
-}
