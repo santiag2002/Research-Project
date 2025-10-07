@@ -1,0 +1,90 @@
+#!/bin/bash
+#SBATCH --account=def-mcfarlas
+#SBATCH --time=4:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --job-name=prep_genome
+#SBATCH --output=prep_genome.out
+#SBATCH --error=prep_genome.err
+
+cd $SCRATCH/Research_Project/Pipeline_dev
+
+# Load required modules
+module load StdEnv/2023
+module load bowtie2/2.5.4
+
+echo "=== Starting Genome Preparation ==="
+echo "Date: $(date)"
+echo "Working directory: $(pwd)"
+
+# Step 1: Download the reference genome
+echo "=== Downloading Reference Genome ==="
+echo "Start download: $(date)"
+
+curl -O "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/003/704/035/GCA_003704035.3_HU_Pman_2.1.3/GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz"
+
+# Check if download was successful
+if [ $? -eq 0 ] && [ -f "GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz" ]; then
+    echo "✓ Download completed successfully"
+    echo "File size: $(ls -lh GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz)"
+else
+    echo "✗ Download failed"
+
+        exit 1
+    fi
+fi
+
+echo "Download completed: $(date)"
+
+# Step 2: Uncompress and rename
+echo "=== Processing Genome File ==="
+echo "Uncompressing genome file..."
+
+gunzip GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz
+
+if [ $? -eq 0 ]; then
+    echo "✓ Uncompression successful"
+else
+    echo "✗ Uncompression failed!"
+    exit 1
+fi
+
+# Rename to expected filename
+mv GCA_003704035.3_HU_Pman_2.1.3_genomic.fna reference_genome.fa
+
+echo "✓ Renamed to reference_genome.fa"
+echo "Final genome file size: $(ls -lh reference_genome.fa)"
+
+# Step 3: Verify genome file
+echo "=== Verifying Genome File ==="
+echo "Number of sequences: $(grep -c '^>' reference_genome.fa)"
+echo "First few lines:"
+head -5 reference_genome.fa
+
+# Step 4: Create index directory
+echo "=== Creating Index Directory ==="
+mkdir -p genome_index
+echo "✓ Created genome_index directory"
+
+# Step 5: Build Bowtie2 index
+echo "=== Building Bowtie2 Index ==="
+echo "Start indexing: $(date)"
+echo "Using ${SLURM_CPUS_PER_TASK} CPUs for indexing"
+
+bowtie2-build --threads ${SLURM_CPUS_PER_TASK} reference_genome.fa genome_index/genome_index
+
+# Check if indexing was successful
+if [ $? -eq 0 ]; then
+    echo "✓ Bowtie2 indexing completed successfully"
+    echo "Index completion time: $(date)"
+else
+    echo "✗ Bowtie2 indexing failed!"
+    exit 1
+fi
+
+# Final summary
+echo "=== Genome Preparation Complete ==="
+echo "End time: $(date)"
+echo "Reference genome: reference_genome.fa ($(ls -lh reference_genome.fa | awk '{print $5}'))"
+echo "Index directory: genome_index/ ($(du -sh genome_index/ | awk '{print $1}'))"
+echo ""
