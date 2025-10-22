@@ -32,7 +32,6 @@ else
 
         exit 1
     fi
-fi
 
 echo "Download completed: $(date)"
 
