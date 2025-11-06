@@ -75,21 +75,84 @@ process ALIGN_AND_SORT {
 }
 
 // Generate depth
-process SAMTOOLS_DEPTH {
-    tag "$sample_id"
-    publishDir "${params.outdir}/depth", mode: 'copy'
+process SAMTOOLS_DEPTH_SUMMARY_COMBINED {
+    tag "depth_summary_all_samples"
+    publishDir "${params.outdir}/summary", mode: 'copy'
 
-    module 'StdEnv/2023:samtools/1.22.1'  // ← UPDATED WITH CORRECT VERSION
+    module 'StdEnv/2023:samtools/1.22.1'
 
     input:
-    tuple val(sample_id), path(bam), path(bai)
+    path bam_files
+    path bai_files
 
     output:
-    tuple val(sample_id), path("${sample_id}_depth.txt")
+    path "depth_summary_all_samples.txt", emit: depth_summary
+    path "coverage_stats.txt", emit: coverage_stats
 
     script:
     """
-    samtools depth ${bam} > ${sample_id}_depth.txt
+    # Create header
+    echo "Sample,Total_positions,Mean_depth,Min_depth,Max_depth,Zero_coverage,Low_coverage_1-4x,Medium_coverage_5-9x,Good_coverage_10-19x,High_coverage_20x+,Percent_covered" > depth_summary_all_samples.txt
+    
+    # Process each BAM file
+    for bam in ${bam_files}; do
+        sample=\$(basename \$bam .bam)
+        echo "Processing \$sample..."
+        
+        samtools depth \$bam | awk -v sample=\$sample '
+        BEGIN {
+            sum = 0; count = 0; min = 999999; max = 0
+            zero = 0; low = 0; med = 0; good = 0; high = 0
+        }
+        {
+            depth = \$3
+            sum += depth
+            count++
+            if (depth > max) max = depth
+            if (depth < min && depth > 0) min = depth
+            
+            if (depth == 0) zero++
+            else if (depth < 5) low++
+            else if (depth < 10) med++
+            else if (depth < 20) good++
+            else high++
+        }
+        END {
+            mean = (count > 0) ? sum/count : 0
+            min = (min == 999999) ? 0 : min
+            percent_covered = (count > 0) ? ((count-zero)/count)*100 : 0
+            print sample "," count "," mean "," min "," max "," zero "," low "," med "," good "," high "," percent_covered
+        }' >> depth_summary_all_samples.txt
+    done
+    
+    # Generate overall statistics
+    echo "=== COVERAGE SUMMARY STATISTICS ===" > coverage_stats.txt
+    echo "Total samples: \$((\$(wc -l < depth_summary_all_samples.txt) - 1))" >> coverage_stats.txt
+    echo "Generated: \$(date)" >> coverage_stats.txt
+    echo "" >> coverage_stats.txt
+    
+    # Calculate summary stats from the combined file
+    tail -n +2 depth_summary_all_samples.txt | awk -F',' '
+    BEGIN { 
+        sum_mean = 0; count = 0; min_mean = 999999; max_mean = 0
+        sum_covered = 0
+    }
+    {
+        mean_depth = \$3
+        percent_covered = \$11
+        sum_mean += mean_depth
+        sum_covered += percent_covered
+        count++
+        if (mean_depth > max_mean) max_mean = mean_depth
+        if (mean_depth < min_mean) min_mean = mean_depth
+    }
+    END {
+        avg_mean_depth = sum_mean / count
+        avg_percent_covered = sum_covered / count
+        print "Average mean depth across samples: " avg_mean_depth
+        print "Range of mean depths: " min_mean " - " max_mean
+        print "Average genome coverage: " avg_percent_covered "%"
+    }' >> coverage_stats.txt
     """
 }
 
@@ -232,12 +295,13 @@ workflow {
 
     // Continue with rest of pipeline
     aligned = ALIGN_AND_SORT(fastq_ch, genome_ch, genome_index_ch)
-    depth = SAMTOOLS_DEPTH(aligned.bam)
 
-    bam_files = aligned.bam.map { sample_id, bam, bai -> bam }.collect()
-    bai_files = aligned.bam.map { sample_id, bam, bai -> bai }.collect()
+    all_bams = aligned.bam.collect { sample_id, bam, bai -> bam }
+    all_bais = aligned.bam.collect { sample_id, bam, bai -> bai }
 
-    variants = BCFTOOLS_MPILEUP(bam_files, bai_files, genome_ch)
+    depth_summary = SAMTOOLS_DEPTH_SUMMARY_COMBINED(all_bams, all_bais)
+    variants = BCFTOOLS_MPILEUP(all_bams, all_bais, genome_ch)
+    
     filtered_variants = FILTER_VARIANTS(variants.raw_vcf, variants.raw_vcf_index)
     VARIANT_STATS(filtered_variants.filtered_vcf, filtered_variants.filtered_vcf_index)
 }
