@@ -23,3 +23,39 @@ NXF_ANSI_LOG=false nextflow run main.nf \
     -with-report \
     -with-timeline \
     -with-trace
+
+# Check if pipeline succeeded
+if [ $? -eq 0 ]; then
+    echo "Pipeline completed successfully. Starting cleanup: $(date)"
+    
+    # Count files before cleanup
+    echo "Files before cleanup:"
+    echo "FASTQ files: $(find $PROJECT_DIR/results/temp_fastq -name '*.fastq.gz' 2>/dev/null | wc -l)"
+    echo "BAM files: $(find $PROJECT_DIR/results/aligned -name '*.bam' 2>/dev/null | wc -l)"
+    
+    # Calculate space before cleanup
+    temp_size=$(du -sh $PROJECT_DIR/results/temp_fastq 2>/dev/null | cut -f1 || echo "0")
+    aligned_size=$(du -sh $PROJECT_DIR/results/aligned 2>/dev/null | cut -f1 || echo "0")
+    echo "Space used by temp_fastq: $temp_size"
+    echo "Space used by aligned: $aligned_size"
+    
+    # Remove intermediate files
+    echo "Removing FASTQ files..."
+    rm -rf $PROJECT_DIR/results/temp_fastq/*.fastq.gz
+    
+    echo "Removing BAM and BAI files..."
+    rm -rf $PROJECT_DIR/results/aligned/*.bam*
+    
+    # Remove work directory (optional)
+    echo "Removing Nextflow work directory..."
+    rm -rf work/
+    
+    echo "Cleanup completed: $(date)"
+    echo "Final results preserved in:"
+    find $PROJECT_DIR/results -type f -name "*.txt" -o -name "*.vcf.gz*" | head -10
+    
+else
+    echo "Pipeline failed. Skipping cleanup to preserve intermediate files for debugging."
+fi
+
+echo "Job finished: $(date)"
