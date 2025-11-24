@@ -270,7 +270,7 @@ process VARIANT_STATS {
 // Define workflow
 workflow {
     // Create genome channels
-    genome_ch = Channel.fromPath(params.genome)
+    genome_ch = Channel.value(file(params.genome))
     genome_index_ch = Channel.fromPath("${params.genome_index_dir}/${params.genome_index_base}*")
         .collect()
 
