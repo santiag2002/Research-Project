@@ -83,7 +83,7 @@ process SAMTOOLS_DEPTH_SUMMARY_COMBINED {
 
     input:
     path all_bams
-    path all_bams
+    path all_bais
 
     output:
     path "depth_summary_all_samples.txt", emit: depth_summary
