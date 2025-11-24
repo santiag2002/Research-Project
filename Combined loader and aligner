@@ -95,7 +95,7 @@ process SAMTOOLS_DEPTH_SUMMARY_COMBINED {
     echo "Sample,Total_positions,Mean_depth,Min_depth,Max_depth,Zero_coverage,Low_coverage_1-4x,Medium_coverage_5-9x,Good_coverage_10-19x,High_coverage_20x+,Percent_covered" > depth_summary_all_samples.txt
     
     # Process each BAM file
-    for bam in ${bam_files}; do
+    for bam in *.bam; do
         sample=\$(basename \$bam .bam)
         echo "Processing \$sample..."
         
