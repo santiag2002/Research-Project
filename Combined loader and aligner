@@ -58,8 +58,8 @@ process ALIGN_AND_SORT {
 
     input:
     tuple val(sample_id), val(is_paired), path(reads)
-    each path(genome)
-    each path(index)
+    path genome
+    path index
 
     output:
     tuple val(sample_id), path("${sample_id}.bam"), path("${sample_id}.bam.bai"), emit: bam
@@ -82,8 +82,8 @@ process SAMTOOLS_DEPTH_SUMMARY_COMBINED {
     module 'StdEnv/2023:samtools/1.22.1'
 
     input:
-    path bam_files
-    path bai_files
+    path all_bams
+    path all_bams
 
     output:
     path "depth_summary_all_samples.txt", emit: depth_summary
