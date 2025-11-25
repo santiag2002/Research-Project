@@ -247,23 +247,29 @@ process VARIANT_STATS {
     tag "variant_statistics"
     publishDir "${params.outdir}/variants", mode: 'copy'
 
-    module 'StdEnv/2023:bcftools/1.22'  // ← UPDATED WITH CORRECT VERSION
+    module 'StdEnv/2023:bcftools/1.20'
 
     input:
     path filtered_vcf
     path filtered_vcf_index
 
     output:
-    path "variant_summary.txt"
-    path "allele_frequencies.txt"
+    path "variant_summary.txt", emit: variant_summary
+    path "variant_details.txt", emit: variant_details
+    path "allele_frequencies.txt", emit: allele_frequencies
 
     script:
     """
     # Basic variant statistics
     bcftools stats ${filtered_vcf} > variant_summary.txt
 
-    # Extract allele frequencies
-    bcftools query -f '%CHROM\\t%POS\\t%REF\\t%ALT\\t%INFO/AF\\n' ${filtered_vcf} > allele_frequencies.txt
+    # Extract variant information with available fields
+    echo "CHROM\tPOS\tREF\tALT\tQUAL\tDP\tAC\tAN\tMQ" > variant_details.txt
+    bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%QUAL\t%INFO/DP\t%INFO/AC\t%INFO/AN\t%INFO/MQ\n' ${filtered_vcf} >> variant_details.txt
+
+    # Calculate allele frequencies from AC/AN
+    echo "CHROM\tPOS\tREF\tALT\tALLELE_FREQ" > allele_frequencies.txt
+    bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%INFO/AC\t%INFO/AN\n' ${filtered_vcf} | awk 'BEGIN{OFS="\t"} {if(\$6>0) freq=\$5/\$6; else freq="NA"; print \$1,\$2,\$3,\$4,freq}' >> allele_frequencies.txt
     """
 }
 
