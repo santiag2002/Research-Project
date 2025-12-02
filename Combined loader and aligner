@@ -311,3 +311,83 @@ workflow {
     filtered_variants = FILTER_VARIANTS(variants.raw_vcf, variants.raw_vcf_index)
     VARIANT_STATS(filtered_variants.filtered_vcf, filtered_variants.filtered_vcf_index)
 }
+ // Cleanup operations
+ workflow.onComplete {
+    if (workflow.success) {
+        log.info "="*60
+        log.info "Pipeline completed successfully!"
+        log.info "Starting cleanup of intermediate files..."
+        log.info "="*60
+
+        // Define directories to clean
+        def tempFastqDir = file("${params.temp_fastq}")
+        def alignedDir = file("${params.outdir}/aligned")
+        def workDir = file("${workflow.workDir}")
+
+        // Clean temp_fastq directory
+        if (tempFastqDir.exists()) {
+            def fastqFiles = tempFastqDir.listFiles().findAll { it.name.endsWith('.fastq.gz') }
+            log.info "Found ${fastqFiles.size()} FASTQ files in temp_fastq"
+
+            if (tempFastqDir.deleteDir()) {
+                log.info "✓ Removed temp_fastq directory"
+            } else {
+                log.warn "✗ Failed to remove temp_fastq directory"
+            }
+        } else {
+            log.info "temp_fastq directory not found (may not have been created)"
+        }
+
+        // Clean aligned directory
+        if (alignedDir.exists()) {
+            def bamFiles = alignedDir.listFiles().findAll {
+                it.name.endsWith('.bam') || it.name.endsWith('.bai')
+            }
+            log.info "Found ${bamFiles.size()} BAM/BAI files in aligned"
+
+            if (alignedDir.deleteDir()) {
+                log.info "✓ Removed aligned directory"
+            } else {
+                log.warn "✗ Failed to remove aligned directory"
+            }
+        } else {
+            log.info "aligned directory not found (may not have been created)"
+        }
+
+        // Clean work directory
+        if (workDir.exists()) {
+            def workSize = null
+            try {
+                // Calculate size before deletion (may take a moment)
+                def sizeBytes = workDir.directorySize()
+                workSize = String.format("%.2f GB", sizeBytes / 1024 / 1024 / 1024)
+            } catch (Exception e) {
+                workSize = "unknown size"
+            }
+
+            log.info "Removing work directory (${workSize})..."
+
+            if (workDir.deleteDir()) {
+                log.info "✓ Removed work directory"
+            } else {
+                log.warn "✗ Failed to remove work directory"
+            }
+        } else {
+            log.info "work directory not found"
+        }
+        log.info "="*60
+        log.info "Cleanup completed!"
+        log.info "Final results preserved in:"
+        log.info "  - ${params.outdir}/summary"
+        log.info "  - ${params.outdir}/variants"
+        log.info "="*60
+    } else {
+        log.info "="*60
+        log.warn "Pipeline failed - skipping cleanup"
+        log.warn "Intermediate files preserved for debugging in:"
+        log.warn "  - ${params.temp_fastq}"
+        log.warn "  - ${params.outdir}/aligned"
+        log.warn "  - work/"
+        log.info "="*60
+    }
+}
