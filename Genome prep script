@@ -7,6 +7,19 @@
 #SBATCH --output=prep_genome.out
 #SBATCH --error=prep_genome.err
 
+# ============================================
+# CONFIGURATION - EDIT THIS SECTION
+# ============================================
+# Set your genome URL here
+GENOME_URL="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/003/704/035/GCA_003704035.3_HU_Pman_2.1.3/GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz"
+
+# Optional: Set a custom output name (leave empty to auto-detect from URL)
+GENOME_NAME=""  # e.g., "my_reference_genome.fa"
+# ============================================
+
+# Exit on any error
+set -euo pipefail
+
 cd $SCRATCH/Research_Project/Pipeline_dev
 
 # Load required modules
@@ -16,49 +29,65 @@ module load bowtie2/2.5.4
 echo "=== Starting Genome Preparation ==="
 echo "Date: $(date)"
 echo "Working directory: $(pwd)"
+echo "Genome URL: ${GENOME_URL}"
+
+# Extract filename from URL
+DOWNLOAD_FILE=$(basename "${GENOME_URL}")
+echo "Download filename: ${DOWNLOAD_FILE}"
+
+# Determine final genome name
+if [ -z "${GENOME_NAME}" ]; then
+    # Auto-detect: remove .gz and .fna extensions, add .fa
+    GENOME_NAME="reference_genome.fa"
+    echo "Using default genome name: ${GENOME_NAME}"
+else
+    echo "Using custom genome name: ${GENOME_NAME}"
+fi
 
 # Step 1: Download the reference genome
 echo "=== Downloading Reference Genome ==="
 echo "Start download: $(date)"
 
-curl -O "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/003/704/035/GCA_003704035.3_HU_Pman_2.1.3/GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz"
-
-# Check if download was successful
-if [ $? -eq 0 ] && [ -f "GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz" ]; then
-    echo "✓ Download completed successfully"
-    echo "File size: $(ls -lh GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz)"
+if [ -f "${DOWNLOAD_FILE}" ]; then
+    echo "⚠ Download file already exists, skipping download"
+elif [ -f "${GENOME_NAME}" ]; then
+    echo "⚠ ${GENOME_NAME} already exists, skipping download and processing"
 else
-    echo "✗ Download failed"
+    curl -L -O "${GENOME_URL}"
 
-        exit 1
+    echo "✓ Download completed successfully"
+    echo "File size: $(ls -lh ${DOWNLOAD_FILE} | awk '{print $5}')"
+    echo "Download completed: $(date)"
+
+    # Step 2: Uncompress and rename
+    echo "=== Processing Genome File ==="
+
+    # Handle both .gz and non-.gz files
+    if [[ "${DOWNLOAD_FILE}" == *.gz ]]; then
+        echo "Uncompressing genome file..."
+        gunzip "${DOWNLOAD_FILE}"
+        UNCOMPRESSED_FILE="${DOWNLOAD_FILE%.gz}"
+        echo "✓ Uncompression successful"
+    else
+        echo "File is not compressed, using as-is"
+        UNCOMPRESSED_FILE="${DOWNLOAD_FILE}"
     fi
 
-echo "Download completed: $(date)"
-
-# Step 2: Uncompress and rename
-echo "=== Processing Genome File ==="
-echo "Uncompressing genome file..."
-
-gunzip GCA_003704035.3_HU_Pman_2.1.3_genomic.fna.gz
-
-if [ $? -eq 0 ]; then
-    echo "✓ Uncompression successful"
-else
-    echo "✗ Uncompression failed!"
-    exit 1
+    # Rename to expected filename
+    if [ "${UNCOMPRESSED_FILE}" != "${GENOME_NAME}" ]; then
+        mv "${UNCOMPRESSED_FILE}" "${GENOME_NAME}"
+        echo "✓ Renamed to ${GENOME_NAME}"
+    fi
 fi
 
-# Rename to expected filename
-mv GCA_003704035.3_HU_Pman_2.1.3_genomic.fna reference_genome.fa
-
-echo "✓ Renamed to reference_genome.fa"
-echo "Final genome file size: $(ls -lh reference_genome.fa)"
+echo "Final genome file size: $(ls -lh ${GENOME_NAME} | awk '{print $5}')"
 
 # Step 3: Verify genome file
 echo "=== Verifying Genome File ==="
-echo "Number of sequences: $(grep -c '^>' reference_genome.fa)"
-echo "First few lines:"
-head -5 reference_genome.fa
+echo "Number of sequences: $(grep -c '^>' ${GENOME_NAME})"
+echo "Total size: $(wc -c < ${GENOME_NAME} | numfmt --to=iec-i --suffix=B)"
+echo "First sequence header:"
+head -1 ${GENOME_NAME}
 
 # Step 4: Create index directory
 echo "=== Creating Index Directory ==="
@@ -67,23 +96,31 @@ echo "✓ Created genome_index directory"
 
 # Step 5: Build Bowtie2 index
 echo "=== Building Bowtie2 Index ==="
-echo "Start indexing: $(date)"
-echo "Using ${SLURM_CPUS_PER_TASK} CPUs for indexing"
 
-bowtie2-build --threads ${SLURM_CPUS_PER_TASK} reference_genome.fa genome_index/genome_index
+if [ -f "genome_index/genome_index.1.bt2" ]; then
+    echo "⚠ Bowtie2 index already exists, skipping indexing"
+else
+    echo "Start indexing: $(date)"
+    echo "Using ${SLURM_CPUS_PER_TASK} CPUs for indexing"
 
-# Check if indexing was successful
-if [ $? -eq 0 ]; then
+    bowtie2-build --threads ${SLURM_CPUS_PER_TASK} ${GENOME_NAME} genome_index/genome_index
+
     echo "✓ Bowtie2 indexing completed successfully"
     echo "Index completion time: $(date)"
-else
-    echo "✗ Bowtie2 indexing failed!"
-    exit 1
 fi
+
+# Verify index files
+echo "=== Verifying Index Files ==="
+echo "Index files created:"
+ls -lh genome_index/genome_index*.bt2 | awk '{print "  " $9 " - " $5}'
 
 # Final summary
 echo "=== Genome Preparation Complete ==="
 echo "End time: $(date)"
-echo "Reference genome: reference_genome.fa ($(ls -lh reference_genome.fa | awk '{print $5}'))"
-echo "Index directory: genome_index/ ($(du -sh genome_index/ | awk '{print $1}'))"
 echo ""
+echo "Summary:"
+echo "  Reference genome: ${GENOME_NAME} ($(ls -lh ${GENOME_NAME} | awk '{print $5}'))"
+echo "  Index directory: genome_index/ ($(du -sh genome_index/ | awk '{print $1}'))"
+echo "  Index files: $(ls genome_index/genome_index*.bt2 | wc -l) files"
+echo ""
+echo "✓ Ready to run Nextflow pipeline!"
