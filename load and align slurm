@@ -16,7 +16,10 @@ module load nextflow/24.04.4
 # Print Nextflow version for debugging
 nextflow -version
 
-# Run the Nextflow pipeline (using modules profile)
+echo "Starting pipeline: $(date)"
+
+# Run the Nextflow pipeline
+# Cleanup is handled by nextflow.config and workflow.onComplete
 NXF_ANSI_LOG=false nextflow run main.nf \
     -profile modules \
     -resume \
@@ -24,38 +27,5 @@ NXF_ANSI_LOG=false nextflow run main.nf \
     -with-timeline \
     -with-trace
 
-# Check if pipeline succeeded
-if [ $? -eq 0 ]; then
-    echo "Pipeline completed successfully. Starting cleanup: $(date)"
-    
-    # Count files before cleanup
-    echo "Files before cleanup:"
-    echo "FASTQ files: $(find $SCRATCH/Research_Project/Pipeline_dev/results/temp_fastq -name '*.fastq.gz' 2>/dev/null | wc -l)"
-    echo "BAM files: $(find $SCRATCH/Research_Project/Pipeline_dev/results/aligned -name '*.bam' 2>/dev/null | wc -l)"
-    
-    # Calculate space before cleanup
-    temp_size=$(du -sh $SCRATCH/Research_Project/Pipeline_dev/results/temp_fastq 2>/dev/null | cut -f1 || echo "0")
-    aligned_size=$(du -sh $SCRATCH/Research_Project/Pipeline_dev/results/aligned 2>/dev/null | cut -f1 || echo "0")
-    echo "Space used by temp_fastq: $temp_size"
-    echo "Space used by aligned: $aligned_size"
-    
-    # Remove intermediate files
-    echo "Removing FASTQ files..."
-    rm -rf $SCRATCH/Research_Project/Pipeline_dev/results/temp_fastq/*.fastq.gz
-    
-    echo "Removing BAM and BAI files..."
-    rm -rf $SCRATCH/Research_Project/Pipeline_dev/results/aligned/*.bam*
-    
-    # Remove work directory (optional)
-    echo "Removing Nextflow work directory..."
-    rm -rf work/
-    
-    echo "Cleanup completed: $(date)"
-    echo "Final results preserved in:"
-    find $SCRATCH/Research_Project/Pipeline_dev/results -type f -name "*.txt" -o -name "*.vcf.gz*" | head -10
-    
-else
-    echo "Pipeline failed. Skipping cleanup to preserve intermediate files for debugging."
-fi
-
-echo "Job finished: $(date)"
+echo "Pipeline finished: $(date)"
+echo "Exit code: $?"
