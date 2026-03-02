@@ -23,7 +23,7 @@ params.maf = 0.01        // 1% minor allele frequency
 genome_ch = Channel.fromPath(params.genome)
 genome_index_ch = Channel.fromPath("${params.genome_index_dir}/${params.genome_index_base}*.bt2")
 
-// Process to download SRA data using native modules
+// Download Process
 process FETCHNGS {
     publishDir "${params.temp_fastq}", mode: 'copy'
     module 'StdEnv/2023:sra-toolkit/3.0.9'
